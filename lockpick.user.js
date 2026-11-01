@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lockpick: Jail Bust HUD
 // @namespace    eaglewing.torn.lockpick
-// @version      1.4.7
+// @version      1.4.8
 // @description  A heads-up display for busting in Torn: odds on every prisoner, a heat gauge for your bust penalty, a bail cap, and one-press "Best Bust" / "Best Bail" buttons that stay within Torn's 1 click = 1 request rule.
 // @author       Eaglewing
 // @match        https://www.torn.com/*
@@ -46,7 +46,7 @@
   if (window.__lockpickHud) return;
   window.__lockpickHud = true;
 
-  const VERSION = '1.4.7';
+  const VERSION = '1.4.8';
 
   // ---------------------------------------------------------------------------
   // Model constants
@@ -86,7 +86,8 @@
     get(k, d) {
       try {
         const raw = hasGM ? GM_getValue(k) : localStorage.getItem(k);
-        return raw == null ? d : JSON.parse(raw);
+        if (raw == null) return d;
+        try { return JSON.parse(raw); } catch (e) { return typeof raw === 'string' ? raw : d; }   // also accepts a key saved as plain text (e.g. by TUCC)
       } catch (e) { return d; }
     },
     set(k, v) {

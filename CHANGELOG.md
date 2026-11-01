@@ -2,6 +2,9 @@
 
 All notable changes to Lockpick: Jail Bust HUD.
 
+## 1.4.8
+- A saved API key stored as plain text (for example by TUCC, Torn Ultimate Command Centre) is now read correctly instead of being ignored.
+
 ## 1.4.7
 - First public release on GitHub, with automatic updates through Tampermonkey.
 - Best Bail turns red while nobody on the page fits your bail cap, and back to green when someone does.
