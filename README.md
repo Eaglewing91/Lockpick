@@ -38,10 +38,13 @@ A small heat badge also sits next to **Jail** in Torn's menu.
 ![Nav badge](screenshots/nav-badge.png)
 
 ### Best Bust and Best Bail
-- **Best Bust** clicks the bust link of the prisoner with the best odds.
-- **Best Bail** clicks the bail link of the cheapest prisoner within your bail cap, showing the exact price. It turns red when nobody qualifies.
+- **Best Bust** clicks the bust link of the prisoner with the best odds. It turns green when that prisoner is 80% or better.
+- **Best Bail** clicks the bail link of the cheapest prisoner within your bail cap, showing the exact price. It turns green when someone is within your cap, and red when nobody qualifies.
 
-Each press is one click on Torn's real link. Nothing repeats or runs on its own.
+Each press is one click on Torn's real link, and only a real click or tap counts. Nothing repeats or runs on its own.
+
+### Refresh
+The slim **Refresh** button between Best Bust and Best Bail updates the prisoner list without reloading the page: new prisoners appear, released ones disappear and times update. Each press asks Torn once for the jail list you're viewing, exactly as the jail page does when you change page. A second press within a second is ignored.
 
 ![Best Bail with nobody under the cap](screenshots/bail-none.png)
 
@@ -96,8 +99,8 @@ The panel rearranges for narrow screens, buttons are larger, and details open wi
 
 ## Compliance with Torn's scripting rules
 
-- **Torn API only.** The only requests Lockpick makes are to `api.torn.com`: your bust log every 60 seconds while the jail page is open, and your level and perks once a day. Nothing is fetched on other pages.
-- **One click = one request.** Best Bust and Best Bail each click one real link on the page you're viewing, and Torn's own handler sends the request. There are no loops, timers or queues.
+- **Torn API, plus one request per Refresh press.** Lockpick's automatic requests go only to `api.torn.com`: your bust log every 60 seconds while the jail page is open, and your level and perks once a day. Nothing is fetched on other pages. The only other request is when you press **Refresh**: one press = one request for the jail list you're viewing, never automatic and at most one per second. If the list isn't on the page, Refresh reloads the page once instead.
+- **One click = one request.** Best Bust and Best Bail each click one real link on the page you're viewing, and Torn's own handler sends the request. Only real clicks count, and each button pauses for a moment after a press. There are no loops, timers or queues.
 - **Skip-confirm** only rewrites the link you clicked, at the moment you click it.
 - **The bail cap** only stops clicks; it can never send anything.
 - **Reading pages** is limited to the jail page you have open and the Jail link in the menu.

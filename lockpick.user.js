@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lockpick: Jail Bust HUD
 // @namespace    eaglewing.torn.lockpick
-// @version      1.4.8
+// @version      1.4.9
 // @description  A heads-up display for busting in Torn: odds on every prisoner, a heat gauge for your bust penalty, a bail cap, and one-press "Best Bust" / "Best Bail" buttons that stay within Torn's 1 click = 1 request rule.
 // @author       Eaglewing
 // @match        https://www.torn.com/*
@@ -25,7 +25,10 @@
  * COMPLIANCE
  * - Torn API (api.torn.com) only, throttled: bust log every 60s while the jail page is
  *   open; level and perks once a day. Nothing is fetched on other pages.
- * - No other requests to torn.com are made by this script.
+ * - One other request to torn.com, and only when you press Refresh: one press = one request
+ *   for the jail list you are viewing (the same request the jail page makes when you change
+ *   page), so the list updates without reloading. A real click only, never automatic, never
+ *   repeated, and at most one per second.
  * - Skip-confirm switches rewrite the link YOU clicked to Torn's no-confirm variant at the
  *   moment of the click. Your click is still the one and only request.
  * - "Best Bust" / "Best Bail": one press = one .click() on the real bust or bail link of the
@@ -33,7 +36,8 @@
  *   Torn's own handler sends the request. No loops, timers or queues.
  * - Bail cap: a bail click over your cap is stopped before Torn sees it. It can only ever
  *   prevent a request, never create one.
- * - Reload button: one press = one normal page reload.
+ * - If the jail list isn't on the page, Refresh does one normal page reload instead. If the
+ *   request fails, it says so in the HUD and sends nothing else.
  * - Page reading is limited to the jail page you have open (and the Jail link in the menu).
  * - No external servers, no WebSockets. All data stays on this device.
  *
@@ -46,7 +50,7 @@
   if (window.__lockpickHud) return;
   window.__lockpickHud = true;
 
-  const VERSION = '1.4.8';
+  const VERSION = '1.4.9';
 
   // ---------------------------------------------------------------------------
   // Model constants
@@ -526,6 +530,7 @@
             <span class="lp-go-main">${ICON.key}<span>Best Bust</span><b data-k="bestodds"></b></span>
             <span class="lp-go-sub" data-k="bestname">Looking for targets...</span>
           </button>
+          <button type="button" class="lp-refresh" data-act="reload" aria-label="Refresh the jail list">Refresh</button>
           <button type="button" class="lp-go lp-go-bail" data-act="bail">
             <span class="lp-go-main">${ICON.coin}<span>Best Bail</span><b data-k="bailcost"></b></span>
             <span class="lp-go-sub" data-k="bailname">Looking for bails...</span>
@@ -538,7 +543,6 @@
             <input type="checkbox" data-q="quickBail"><i></i><span>Skip bail confirm<em class="lp-cap" data-k="cap"></em></span></label>
         </div>
         <div class="lp-tools">
-          <button type="button" class="lp-ib" data-act="reload" title="Reload the jail list" aria-label="Reload the jail list">${ICON.reload}</button>
           <button type="button" class="lp-ib" data-act="settings" title="Settings" aria-label="Settings">${ICON.sliders}</button>
           <button type="button" class="lp-ib" data-act="collapse" title="Compact view" aria-label="Compact view">${ICON.minus}</button>
         </div>
@@ -569,9 +573,10 @@
       if (act === 'expand' || act === 'collapse') { S.dockCollapsed = act === 'collapse'; save('s'); render(); }
       else if (act === 'settings') toggleDrawer();
       else if (act === 'fixkey') openDrawer('key');
-      else if (act === 'reload') location.reload();
-      else if (act === 'best') pickBest(b, 'bust');
-      else if (act === 'bail') pickBest(b, 'bail');
+      else if (act === 'reload') { if (e.isTrusted) refreshList(b); }
+      // Real clicks only, so one press = one click on Torn's own link.
+      else if (act === 'best') { if (e.isTrusted) pickBest(b, 'bust'); }
+      else if (act === 'bail') { if (e.isTrusted) pickBest(b, 'bail'); }
     });
     hud.addEventListener('change', (e) => {
       const k = e.target.dataset.q;
@@ -644,6 +649,13 @@
     go.hidden = mini.hidden = !S.bestButton;
     goBail.hidden = miniBail.hidden = !S.bailButton;
     hud.querySelector('.lp-actions').hidden = !S.bestButton && !S.bailButton;
+    // Best Bust goes green when the best target is 80% or better; Best Bail goes green when someone is within your bail cap.
+    const bustOk = !!(bestRow && bestRow._lp && bestRow._lp.p >= 80);
+    go.classList.toggle('lp-go-ok', bustOk);
+    mini.classList.toggle('lp-go-ok', bustOk);
+    const bailOk = !!(bailRow && bailRow._lp && S.maxBail > 0 && bailRow._lp.bail <= S.maxBail);
+    goBail.classList.toggle('lp-go-ok', bailOk);
+    miniBail.classList.toggle('lp-go-ok', bailOk);
     if (bestRow && bestRow._lp) {
       const pr = fmtPct(bestRow._lp.p);
       setText(q('bestodds'), pr);
@@ -671,6 +683,65 @@
   }
 
   // Result messages live in the HUD's feed row, never floating over the page.
+  // Refresh the prisoner list in place. One real press = one request to Torn's own jail list (the same request the
+  // jail page makes when you change page), then the rows are updated here; no page reload. If the request can't be
+  // made, it falls back to reloading the page. Inside TUCC the request goes through TUCC's own guarded helper.
+  let refreshing = false, lastRefresh = 0;
+  const REFRESH_GAP_MS = 1000;   // Torn allows one action per second: a second press within a second is ignored
+  function jailList(start) {
+    if (typeof tucc !== 'undefined' && tucc && tucc.pagePost) return tucc.pagePost({ action: 'jail', start });
+    const rfc = (/(?:^|;\s*)rfc_v=([^;]+)/.exec(document.cookie) || [])[1] || '';
+    const body = new URLSearchParams({ action: 'jail', start: String(start) });
+    return fetch('/jailview.php?rfcv=' + encodeURIComponent(rfc), { method: 'POST', credentials: 'same-origin', body,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' } })
+      .then((r) => r.text(), () => { throw new Error('Could not reach Torn'); })
+      .then((t) => { try { return JSON.parse(t); } catch (e) { throw new Error('Unexpected reply'); } });
+  }
+  const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  async function refreshList(btn) {
+    if (refreshing || Date.now() - lastRefresh < REFRESH_GAP_MS) return;
+    lastRefresh = Date.now();
+    const list = document.querySelector('ul.user-info-list-wrap');
+    if (!list) { location.reload(); return; }
+    refreshing = true;   // a second press while one refresh is still on its way is ignored (no greying out)
+    const active = document.querySelector('a.page-number.active');
+    const pageNo = Math.max(1, parseInt(active && active.getAttribute('page'), 10) || 1);
+    try {
+      const res = await jailList((pageNo - 1) * 50);
+      const players = res && res.data && Array.isArray(res.data.players) ? res.data.players : null;
+      if (!players) throw new Error('Unexpected reply');
+      const rowOf = (id) => { const a = list.querySelector(`a.user.name[href*="XID=${id}"]`); return a && a.closest('li'); };
+      const keep = new Set();
+      for (const pl of players) {
+        const id = String(pl.user_id);
+        let li = rowOf(id);
+        if (li) {
+          const tm = li.querySelector('.time');
+          if (tm) { const title = tm.querySelector('.title'); tm.textContent = ''; if (title) tm.append(title, ' ' + pl.time); else tm.textContent = String(pl.time); }
+        } else {
+          li = document.createElement('li');
+          li.innerHTML = `${pl.online_offline || ''}<span class="user-wrap user-faction">${pl.print_tag || ''}</span><span class="user-wrap user-name">${pl.print_name || ''}</span>
+<span class="info-wrap"><span class="time"><span class="title bold">TIME</span> ${esc(pl.time)}</span><span class="level"><span class="title bold">LEVEL</span> ${esc(pl.level)}</span><span class="reason">${pl.jailreason || ''}</span></span>
+<a class="bye t-gray-3" href="jailview.php?XID=${encodeURIComponent(id)}&action=rescue&step=buy"><span class="bye-icon"></span><span class="title bold wai">BUY</span></a>
+<a class="bust t-gray-3" href="jailview.php?XID=${encodeURIComponent(id)}&action=rescue&step=breakout"><span class="bust-icon"></span><span class="title bold wai">BUST</span></a>
+<div class="confirm-bye"></div><div class="confirm-bust"></div><div class="bottom-white"></div>`;
+          list.appendChild(li);
+        }
+        keep.add(li);
+      }
+      let gone = 0;
+      [...list.children].forEach((li) => { if (li.tagName === 'LI' && li.querySelector('a.user.name') && !keep.has(li)) { li.remove(); gone++; } });
+      const total = document.querySelector('.users-list-title span[class*="total"]');
+      if (total && res.total != null) total.textContent = String(res.total);
+      toast(`List refreshed: ${players.length} on this page${gone ? `, ${gone} gone` : ''}.`, 'info');
+      render();
+    } catch (err) {
+      toast(`Couldn't refresh the list (${err.message}). Reload the page instead.`, 'info');
+    } finally {
+      refreshing = false;
+    }
+  }
+
   function toast(text, kind) {
     if (!hud) return;
     const host = hud.querySelector('[data-k="feed"]');
@@ -1113,6 +1184,9 @@
   .lp-stats dt{color:var(--lp-dim);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
   .lp-stats dd{margin:0;font:700 15px var(--lp-num)}
   .lp-actions{display:flex;flex-direction:column;gap:6px;flex:0 1 250px;min-width:190px}
+  .lp-refresh{align-self:center;width:55%;padding:3px 0;border-radius:7px;border:1px solid var(--lp-line);background:var(--lp-raise);color:var(--lp-text);font:700 12px/16px inherit;cursor:pointer}
+  .lp-refresh:hover{border-color:var(--lp-brass)}
+  .lp-refresh:disabled{opacity:.6;cursor:default}
   .lp-go{width:100%;display:flex;flex-direction:column;align-items:stretch;gap:1px;padding:7px 11px;border-radius:9px;cursor:pointer;text-align:left;
     border:1px solid var(--lp-brass-dk);background:linear-gradient(180deg,var(--lp-brass),var(--lp-brass-dk));color:#1b1406;
     box-shadow:inset 0 1px 0 rgba(255,255,255,.25);transition:filter .15s,transform .05s}
@@ -1137,6 +1211,8 @@
   .lp-go-mini-bail{background:#2d6b5a!important;border-color:#1a3f35!important;color:#e6f7f1!important}
   .lp-go-bail.lp-go-none{background:linear-gradient(180deg,#8a3434,#632222);border-color:#4d1a1a;color:#ffe3e3}
   .lp-go-mini-bail.lp-go-none{background:#7a2e2e!important;border-color:#4d1a1a!important;color:#ffe3e3!important}
+  .lp-go.lp-go-ok,.lp-go-mini.lp-go-ok{background:#15803d!important;border-color:#166534!important;color:#fff!important}
+  .lp-go.lp-go-ok .lp-go-main b{background:rgba(0,0,0,.25)}
   .lp-go-mini{flex:0 0 auto;padding:4px 10px;border-radius:7px;cursor:pointer;font-weight:800;font-size:12px;
     border:1px solid var(--lp-brass-dk);background:var(--lp-brass);color:#1b1406}
 
@@ -1292,6 +1368,17 @@
       sync({ minGap: LOAD_MIN_GAP_MS });
     }
     render();
+    // The heat badge on Torn's Jail menu link: Torn draws (and redraws) its side menu after the page loads, so on
+    // every page watch for the link and put the badge back the moment it's missing. Page drawing only, no requests.
+    let badgeQueued = false;
+    new MutationObserver(() => {
+      if (badgeQueued) return;
+      const a = document.querySelector('#nav-jail a');
+      const want = apiKey() && (S.badge === 'everywhere' || (S.badge === 'jail' && onJail()));
+      if (!a || !want || a.querySelector('.lp-badge')) return;
+      badgeQueued = true;
+      requestAnimationFrame(() => { badgeQueued = false; renderBadge(heatAt(nowSec())); });
+    }).observe(document.body, { childList: true, subtree: true });
 
     setInterval(tick, TICK_MS);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });

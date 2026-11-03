@@ -2,6 +2,12 @@
 
 All notable changes to Lockpick: Jail Bust HUD.
 
+## 1.4.9
+- **Refresh** is now a slim button between Best Bust and Best Bail, and updates the prisoner list in place instead of reloading the page. One press = one request for the jail list you're viewing; a second press within a second is ignored.
+- Best Bust turns green when the best target is 80% or better; Best Bail turns green when someone is within your bail cap.
+- Best Bust, Best Bail and Refresh only respond to real clicks and taps.
+- Fixed: the heat badge next to Jail in Torn's menu could disappear after leaving the jail page until you switched tabs. It now comes back as soon as Torn redraws its menu.
+
 ## 1.4.8
 - A saved API key stored as plain text (for example by TUCC, Torn Ultimate Command Centre) is now read correctly instead of being ignored.
 
